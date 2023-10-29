@@ -12,4 +12,20 @@ contract HelloWorld {
         return number;
     }
 
+    function getBalance() public view returns (uint) {
+        return address(this).balance;
+    }
+
+    function viewBlockNumber() public view returns (uint) {
+        return block.timestamp;
+    }
+
+    function viewMessage() public view returns (address) {
+        return msg.sender;
+    }
+
+    function viewTx() public view returns (address) {
+        return tx.origin;
+    }
+
 }
