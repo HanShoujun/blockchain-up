@@ -57,11 +57,6 @@ contract JJArbi is Ownable {
     }
 
     function removeBaseToken(address token) external onlyOwner {
-        uint256 balance = IERC20(token).balanceOf(address(this));
-        if (balance > 0) {
-            // do not use safe transfer to prevents revert by any shitty token
-            IERC20(token).transfer(owner(), balance);
-        }
         baseTokens.remove(token);
         emit BaseTokenRemoved(token);
     }
