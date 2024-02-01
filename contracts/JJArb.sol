@@ -3,9 +3,11 @@
 pragma solidity ^0.8.0;
 
 import "@openzeppelin/contracts/interfaces/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
+import "@openzeppelin/contracts/utils/Strings.sol";
 
 import "./IUniswapV2.sol";
 
@@ -23,8 +25,8 @@ contract JJArbi is Ownable {
     event BaseTokenAdded(address indexed token);
     event BaseTokenRemoved(address indexed token);
 
-    using SafeERC20 for IERC20;
     // Add the library methods
+    using SafeERC20 for IERC20;
     using EnumerableSet for EnumerableSet.AddressSet;
 
 
@@ -33,6 +35,10 @@ contract JJArbi is Ownable {
     ArbType public constant defaultType = ArbType.univ2;
 
     constructor(address initialOwner) Ownable(initialOwner) {}
+
+    function renounceOwnership() override public onlyOwner {
+        
+    }
 
     function withdraw() external onlyOwner {
         uint256 balance = address(this).balance;
@@ -162,6 +168,19 @@ contract JJArbi is Ownable {
             address(this),
             block.timestamp + 60
         );
+    }
+
+    function requeryTokenMetadata(address[] calldata tokenList) public view returns (string[3][] memory infoList) {
+        uint256 length = tokenList.length;
+        infoList = new string[3][](length);
+        for (uint256 i = 0; i < length; i++) {
+            address token = tokenList[i];
+            string memory name = ERC20(token).name();
+            string memory symbol = ERC20(token).symbol();
+            uint8 decimals = ERC20(token).decimals();
+            string memory decimalsStr = Strings.toString(uint256(decimals));
+            infoList[i] = [name,symbol,decimalsStr];
+        }
     }
 
 }
