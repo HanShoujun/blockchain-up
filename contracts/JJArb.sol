@@ -1,12 +1,11 @@
 // SPDX-License-Identifier:UNLICENSED
 
-pragma solidity ^0.8.0;
+pragma solidity ^0.8.13;
 
 import "@openzeppelin/contracts/interfaces/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
-import "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 import "@openzeppelin/contracts/utils/Strings.sol";
 
 import "./IUniswapV2.sol";
@@ -19,20 +18,14 @@ error UnkownArbType(uint8 arbType);
 
 contract JJArbi is Ownable {
 
-    enum ArbType { none, univ2, univ3 }
+    enum ArbType { none, univ2, univ3, sushiV2, sushiV3, pancakeV2, pancakeV3 }
 
     event Withdrawn(address indexed to, uint256 indexed value);
-    event BaseTokenAdded(address indexed token);
-    event BaseTokenRemoved(address indexed token);
 
     // Add the library methods
     using SafeERC20 for IERC20;
-    using EnumerableSet for EnumerableSet.AddressSet;
 
-
-    // AVAILABLE BASE TOKENS
-    EnumerableSet.AddressSet baseTokens;
-    ArbType public constant defaultType = ArbType.univ2;
+    // ArbType public constant defaultType = ArbType.univ2;
 
     constructor(address initialOwner) Ownable(initialOwner) {}
 
@@ -40,38 +33,21 @@ contract JJArbi is Ownable {
         
     }
 
-    function withdraw() external onlyOwner {
+    function withdrawEthAndTokens(address[] calldata tokenAddressList) external onlyOwner {
         uint256 balance = address(this).balance;
         if (balance > 0) {
             payable(owner()).transfer(balance);
             emit Withdrawn(owner(), balance);
         }
+        uint256 lenght = tokenAddressList.length;
 
-        for (uint256 i = 0; i < baseTokens.length(); i++) {
-            address token = baseTokens.at(i);
+        for (uint256 i = 0; i < lenght; i++) {
+            address token = tokenAddressList[i];
             balance = IERC20(token).balanceOf(address(this));
             if (balance > 0) {
                 // do not use safe transfer here to prevents revert by any shitty token
                 IERC20(token).transfer(owner(), balance);
             }
-        }
-    }
-
-    function addBaseToken(address token) external onlyOwner {
-        baseTokens.add(token);
-        emit BaseTokenAdded(token);
-    }
-
-    function removeBaseToken(address token) external onlyOwner {
-        baseTokens.remove(token);
-        emit BaseTokenRemoved(token);
-    }
-
-    function getBaseTokens() external view returns (address[] memory tokens) {
-        uint256 length = baseTokens.length();
-        tokens = new address[](length);
-        for (uint256 i = 0; i < length; i++) {
-            tokens[i] = baseTokens.at(i);
         }
     }
 
@@ -81,7 +57,7 @@ contract JJArbi is Ownable {
     fallback() external payable {
     }
 
-    function executeArbi(address baseToken, uint256 baseEthPrice, uint256 baseAmount, address[3][] calldata pathList, uint8[] calldata typeList) external payable onlyOwner returns (uint amountOut, uint256 gasUsed) {
+    function executeArbi(address baseToken, uint256 ethReserve, uint256 tokenReserve, uint256 baseAmount, address[3][] calldata pathList, uint8[] calldata typeList) external payable onlyOwner returns (uint amountOut, uint256 gasUsed, uint256 profitEth) {
         require(pathList.length == typeList.length, "Params Error, pathList and typeList diffrent length");
         uint256 startGas = gasleft();
 
@@ -106,7 +82,7 @@ contract JJArbi is Ownable {
             _approveRouter(router, tokens, false);
 
 
-            if (arbType == uint8(ArbType.univ2)) {
+            if (arbType == uint8(ArbType.univ2) || arbType == uint8(ArbType.sushiV2) || arbType == uint8(ArbType.pancakeV2)) {
 
                 uint[] memory amounts = _swapUniV2(router, amountOut, 0, tokens);
                 amountOut = amounts[1];
@@ -125,8 +101,8 @@ contract JJArbi is Ownable {
         // Calculate profit
         uint256 balanceAfter = IERC20(baseToken).balanceOf(address(this));
         require(balanceAfter > balanceBefore, "Arbitrage fail, Losing money");
-        uint256 costBaseToken = gasUsed * 11 / 10 / baseEthPrice;
-        require(balanceAfter - balanceBefore - costBaseToken > 0, "Arbitrage fail, profit is less than cost");
+        profitEth = (balanceAfter - balanceBefore) * ethReserve / tokenReserve;
+        require(profitEth - gasUsed * 11 / 10 > 0, "Arbitrage fail, profit is less than cost");
 
     }
 
