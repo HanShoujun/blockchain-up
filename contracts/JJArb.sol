@@ -1,4 +1,4 @@
-// SPDX-License-Identifier:UNLICENSED
+// SPDX-License-Identifier:MIT
 
 pragma solidity ^0.8.13;
 
@@ -10,15 +10,21 @@ import "@openzeppelin/contracts/utils/Strings.sol";
 
 import "./IUniswapV2.sol";
 
-
-/// Unkown arbitrage type 
+/// Unkown arbitrage type
 /// `arbType` .
 /// @param arbType arbitrage type.
 error UnkownArbType(uint8 arbType);
 
 contract JJArbi is Ownable {
-
-    enum ArbType { none, univ2, univ3, sushiV2, sushiV3, pancakeV2, pancakeV3 }
+    enum ArbType {
+        none,
+        univ2,
+        univ3,
+        sushiV2,
+        sushiV3,
+        pancakeV2,
+        pancakeV3
+    }
 
     event Withdrawn(address indexed to, uint256 indexed value);
 
@@ -29,11 +35,12 @@ contract JJArbi is Ownable {
 
     constructor(address initialOwner) Ownable(initialOwner) {}
 
-    function renounceOwnership() override public onlyOwner {
-        
-    }
+    function renounceOwnership() public override onlyOwner {}
 
-    function withdrawEthAndTokens(address[] calldata tokenAddressList) external onlyOwner {
+    function withdrawEthAndTokens(address[] calldata tokenAddressList)
+        external
+        onlyOwner
+    {
         uint256 balance = address(this).balance;
         if (balance > 0) {
             payable(owner()).transfer(balance);
@@ -51,29 +58,57 @@ contract JJArbi is Ownable {
         }
     }
 
-    receive() external payable {
+    function depositToken(address tokenAddress, uint256 amount) external onlyOwner {
+        require(tokenAddress != address(0), "invalid token address");
+        require(amount > 0, "invalid amount");
+        uint256 senderBalance = IERC20(tokenAddress).balanceOf(msg.sender);
+        require(senderBalance > amount, "insufficient token for transfer");
+
+        require(
+            IERC20(tokenAddress).transferFrom(
+                msg.sender,
+                address(this),
+                amount
+            ),
+            "transfer failed"
+        );
     }
 
-    fallback() external payable {
-    }
+    receive() external payable {}
 
-    function executeArbi(address baseToken, uint256 ethReserve, uint256 tokenReserve, uint256 baseAmount, address[3][] calldata pathList, uint8[] calldata typeList) external payable onlyOwner returns (uint amountOut, uint256 gasUsed, uint256 profitEth) {
-        require(pathList.length == typeList.length, "Params Error, pathList and typeList diffrent length");
-        uint256 startGas = gasleft();
+    fallback() external payable {}
+
+    function executeArbi(
+        address baseToken,
+        uint256 baseAmount,
+        address[3][] calldata pathList,
+        uint8[] calldata typeList,
+        uint256 revertStep
+    ) external payable onlyOwner {
+        require(
+            pathList.length == typeList.length,
+            "Params Error, pathList and typeList diffrent length"
+        );
+        require(revertStep > 1, "revert:1");
 
         uint256 balanceBefore = IERC20(baseToken).balanceOf(address(this));
-        require(balanceBefore > baseAmount, "Arbitrage fail, no enough base token");
+        require(
+            balanceBefore >= baseAmount,
+            "Arbitrage fail, no enough base token"
+        );
 
-        amountOut = baseAmount;
+        require(revertStep > 2, "revert:2");
+        uint256 amountOut = baseAmount;
+        uint256 pathLength = pathList.length;
 
-        uint pathLength = pathList.length;
-
-        for (uint8 i = 0; i < pathLength;) {
+        for (uint8 i = 0; i < pathLength; ) {
             address[3] memory path = pathList[i];
             address router = path[0];
             address tokenIn = path[1];
             address tokenOut = path[2];
             uint8 arbType = typeList[i];
+
+            require(revertStep > 3, "revert:3");
 
             address[] memory tokens;
             tokens = new address[](2);
@@ -81,29 +116,39 @@ contract JJArbi is Ownable {
             tokens[1] = tokenOut;
             _approveRouter(router, tokens, false);
 
+            require(revertStep > 4, "revert:4");
 
-            if (arbType == uint8(ArbType.univ2) || arbType == uint8(ArbType.sushiV2) || arbType == uint8(ArbType.pancakeV2)) {
+            address[] memory routerPath;
+            routerPath = new address[](2);
+            routerPath[0] = tokenIn;
+            routerPath[1] = tokenOut;
 
-                uint[] memory amounts = _swapUniV2(router, amountOut, 0, tokens);
+            if (
+                arbType == uint8(ArbType.univ2) ||
+                arbType == uint8(ArbType.sushiV2) ||
+                arbType == uint8(ArbType.pancakeV2)
+            ) {
+                uint256[] memory amounts = _swapUniV2(
+                    router,
+                    amountOut,
+                    0,
+                    routerPath
+                );
                 amountOut = amounts[1];
-
-            }else {
+            } else {
                 revert UnkownArbType(arbType);
             }
+
+            require(revertStep > 5, "revert:5");
 
             unchecked {
                 i++;
             }
         }
 
-        gasUsed = startGas - gasleft();
-
         // Calculate profit
         uint256 balanceAfter = IERC20(baseToken).balanceOf(address(this));
         require(balanceAfter > balanceBefore, "Arbitrage fail, Losing money");
-        profitEth = (balanceAfter - balanceBefore) * ethReserve / tokenReserve;
-        require(profitEth - gasUsed * 11 / 10 > 0, "Arbitrage fail, profit is less than cost");
-
     }
 
     function _approveRouter(
@@ -112,13 +157,13 @@ contract JJArbi is Ownable {
         bool force
     ) internal {
         // skip approval if it already has allowance and if force is false
-        uint maxInt = type(uint256).max;
+        uint256 maxInt = type(uint256).max;
 
-        uint tokensLength = tokens.length;
+        uint256 tokensLength = tokens.length;
 
         for (uint8 i; i < tokensLength; ) {
             IERC20 token = IERC20(tokens[i]);
-            uint allowance = token.allowance(address(this), router);
+            uint256 allowance = token.allowance(address(this), router);
             if (allowance < (maxInt / 2) || force) {
                 token.approve(router, maxInt);
             }
@@ -131,11 +176,10 @@ contract JJArbi is Ownable {
 
     function _swapUniV2(
         address router,
-        uint amountIn,
-        uint amountOutMin,
+        uint256 amountIn,
+        uint256 amountOutMin,
         address[] memory path
-    ) internal returns (uint[] memory amounts) {
-
+    ) internal returns (uint256[] memory amounts) {
         IUniswapV2Router router2 = IUniswapV2Router(router);
         amounts = router2.swapExactTokensForTokens(
             amountIn,
@@ -146,7 +190,11 @@ contract JJArbi is Ownable {
         );
     }
 
-    function requeryTokenMetadata(address[] calldata tokenList) public view returns (string[3][] memory infoList) {
+    function requeryTokenMetadata(address[] calldata tokenList)
+        public
+        view
+        returns (string[3][] memory infoList)
+    {
         uint256 length = tokenList.length;
         infoList = new string[3][](length);
         for (uint256 i = 0; i < length; i++) {
@@ -155,8 +203,42 @@ contract JJArbi is Ownable {
             string memory symbol = ERC20(token).symbol();
             uint8 decimals = ERC20(token).decimals();
             string memory decimalsStr = Strings.toString(uint256(decimals));
-            infoList[i] = [name,symbol,decimalsStr];
+            infoList[i] = [name, symbol, decimalsStr];
         }
+    }
+
+    function checkTokenTax(
+        address initToken,
+        address checkToken,
+        address router,
+        uint256 initAmount
+    ) external {
+        // require(revertStep > 1, "revert:1");
+        // approve router
+        address[] memory tokens;
+        tokens = new address[](2);
+        tokens[0] = initToken;
+        tokens[1] = checkToken;
+        _approveRouter(router, tokens, false);
+
+        // checkToken balance before this
+        uint256 thisBalanceBefore = IERC20(checkToken).balanceOf(address(this));
+
+        address[] memory routerPath;
+        routerPath = new address[](2);
+        routerPath[0] = initToken;
+        routerPath[1] = checkToken;
+        uint256[] memory amounts = _swapUniV2(
+            router,
+            initAmount,
+            1,
+            routerPath
+        );
+
+        uint256 thisBalanceAfter = IERC20(checkToken).balanceOf(address(this));
+
+        require(thisBalanceAfter - thisBalanceBefore == amounts[1], "tax:true");
+        require(false, "tax:false");
     }
 
 }
