@@ -3,19 +3,9 @@
 pragma solidity ^0.8.13;
 
 import "@openzeppelin/contracts/interfaces/IERC20.sol";
-import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
-import "@openzeppelin/contracts/utils/Strings.sol";
 
 import "./IUniswapV2.sol";
-import "./IUniswapV2Pair.sol";
-
-
-/// Unkown arbitrage type
-/// `arbType` .
-/// @param arbType arbitrage type.
-error UnkownArbType(uint8 arbType);
 
 contract JJArbi is Ownable {
     enum ArbType {
@@ -29,11 +19,6 @@ contract JJArbi is Ownable {
     }
 
     event Withdrawn(address indexed to, uint256 indexed value);
-
-    // Add the library methods
-    using SafeERC20 for IERC20;
-
-    // ArbType public constant defaultType = ArbType.univ2;
 
     constructor(address initialOwner) Ownable(initialOwner) {}
 
@@ -58,22 +43,6 @@ contract JJArbi is Ownable {
                 IERC20(token).transfer(owner(), balance);
             }
         }
-    }
-
-    function depositToken(address tokenAddress, uint256 amount) external onlyOwner {
-        require(tokenAddress != address(0), "invalid token address");
-        require(amount > 0, "invalid amount");
-        uint256 senderBalance = IERC20(tokenAddress).balanceOf(msg.sender);
-        require(senderBalance > amount, "insufficient token for transfer");
-
-        require(
-            IERC20(tokenAddress).transferFrom(
-                msg.sender,
-                address(this),
-                amount
-            ),
-            "transfer failed"
-        );
     }
 
     receive() external payable {}
@@ -131,7 +100,7 @@ contract JJArbi is Ownable {
                 );
                 amountOut = amounts[1];
             } else {
-                revert UnkownArbType(arbType);
+                require(false, "unknown parse type");
             }
 
             unchecked {
@@ -148,7 +117,7 @@ contract JJArbi is Ownable {
         address router,
         address[] memory tokens,
         bool force
-    ) public {
+    ) internal {
         // skip approval if it already has allowance and if force is false
         uint256 maxInt = type(uint256).max;
 
@@ -181,23 +150,6 @@ contract JJArbi is Ownable {
             address(this),
             block.timestamp + 60
         );
-    }
-
-    function requeryTokenMetadata(address[] calldata tokenList)
-        public
-        view
-        returns (string[3][] memory infoList)
-    {
-        uint256 length = tokenList.length;
-        infoList = new string[3][](length);
-        for (uint256 i = 0; i < length; i++) {
-            address token = tokenList[i];
-            string memory name = ERC20(token).name();
-            string memory symbol = ERC20(token).symbol();
-            uint8 decimals = ERC20(token).decimals();
-            string memory decimalsStr = Strings.toString(uint256(decimals));
-            infoList[i] = [name, symbol, decimalsStr];
-        }
     }
 
     function checkTokenTax(
@@ -234,22 +186,5 @@ contract JJArbi is Ownable {
         require(false, "tax:false");
     }
 
-    function getAmountOut(
-        uint256 amountIn,
-        address pairAddress,
-        bool sellToken0
-    ) public view returns (uint256 amountOut) {
-        (uint256 reserveIn,uint256 reserveOut, ) = IUniswapV2Pair(pairAddress).getReserves();
-        if(sellToken0){
-            (reserveOut,reserveIn, ) = IUniswapV2Pair(pairAddress).getReserves();
-        }
-
-        require(amountIn > 0, 'UniswapV2Library: INSUFFICIENT_INPUT_AMOUNT');
-        require(reserveIn > 0 && reserveOut > 0, 'UniswapV2Library: INSUFFICIENT_LIQUIDITY');
-        uint256 amountInWithFee = amountIn*(997);
-        uint256 numerator = amountInWithFee*(reserveOut);
-        uint256 denominator = reserveIn*(1000)+(amountInWithFee);
-        amountOut = numerator / denominator;
-    }
-
+    
 }
