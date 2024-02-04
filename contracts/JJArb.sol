@@ -9,6 +9,8 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/Strings.sol";
 
 import "./IUniswapV2.sol";
+import "./IUniswapV2Pair.sol";
+
 
 /// Unkown arbitrage type
 /// `arbType` .
@@ -82,14 +84,12 @@ contract JJArbi is Ownable {
         address baseToken,
         uint256 baseAmount,
         address[3][] calldata pathList,
-        uint8[] calldata typeList,
-        uint256 revertStep
+        uint8[] calldata typeList
     ) external payable onlyOwner {
         require(
             pathList.length == typeList.length,
             "Params Error, pathList and typeList diffrent length"
         );
-        require(revertStep > 1, "revert:1");
 
         uint256 balanceBefore = IERC20(baseToken).balanceOf(address(this));
         require(
@@ -97,7 +97,6 @@ contract JJArbi is Ownable {
             "Arbitrage fail, no enough base token"
         );
 
-        require(revertStep > 2, "revert:2");
         uint256 amountOut = baseAmount;
         uint256 pathLength = pathList.length;
 
@@ -108,15 +107,11 @@ contract JJArbi is Ownable {
             address tokenOut = path[2];
             uint8 arbType = typeList[i];
 
-            require(revertStep > 3, "revert:3");
-
             address[] memory tokens;
             tokens = new address[](2);
             tokens[0] = tokenIn;
             tokens[1] = tokenOut;
             _approveRouter(router, tokens, false);
-
-            require(revertStep > 4, "revert:4");
 
             address[] memory routerPath;
             routerPath = new address[](2);
@@ -131,15 +126,13 @@ contract JJArbi is Ownable {
                 uint256[] memory amounts = _swapUniV2(
                     router,
                     amountOut,
-                    0,
+                    1,
                     routerPath
                 );
                 amountOut = amounts[1];
             } else {
                 revert UnkownArbType(arbType);
             }
-
-            require(revertStep > 5, "revert:5");
 
             unchecked {
                 i++;
@@ -155,7 +148,7 @@ contract JJArbi is Ownable {
         address router,
         address[] memory tokens,
         bool force
-    ) internal {
+    ) public {
         // skip approval if it already has allowance and if force is false
         uint256 maxInt = type(uint256).max;
 
@@ -212,7 +205,7 @@ contract JJArbi is Ownable {
         address checkToken,
         address router,
         uint256 initAmount
-    ) external {
+    ) external onlyOwner {
         // require(revertStep > 1, "revert:1");
         // approve router
         address[] memory tokens;
@@ -239,6 +232,24 @@ contract JJArbi is Ownable {
 
         require(thisBalanceAfter - thisBalanceBefore == amounts[1], "tax:true");
         require(false, "tax:false");
+    }
+
+    function getAmountOut(
+        uint256 amountIn,
+        address pairAddress,
+        bool sellToken0
+    ) public view returns (uint256 amountOut) {
+        (uint256 reserveIn,uint256 reserveOut, ) = IUniswapV2Pair(pairAddress).getReserves();
+        if(sellToken0){
+            (reserveOut,reserveIn, ) = IUniswapV2Pair(pairAddress).getReserves();
+        }
+
+        require(amountIn > 0, 'UniswapV2Library: INSUFFICIENT_INPUT_AMOUNT');
+        require(reserveIn > 0 && reserveOut > 0, 'UniswapV2Library: INSUFFICIENT_LIQUIDITY');
+        uint256 amountInWithFee = amountIn*(997);
+        uint256 numerator = amountInWithFee*(reserveOut);
+        uint256 denominator = reserveIn*(1000)+(amountInWithFee);
+        amountOut = numerator / denominator;
     }
 
 }
