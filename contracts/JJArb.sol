@@ -4,7 +4,8 @@ pragma solidity ^0.8.13;
 
 import "@openzeppelin/contracts/interfaces/IERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
-
+import "@openzeppelin/contracts/interfaces/IERC20Metadata.sol";
+import "@openzeppelin/contracts/utils/Strings.sol";
 import "./IUniswapV2.sol";
 
 contract JJArbi is Ownable {
@@ -150,40 +151,6 @@ contract JJArbi is Ownable {
             address(this),
             block.timestamp + 60
         );
-    }
-
-    function checkTokenTax(
-        address initToken,
-        address checkToken,
-        address router,
-        uint256 initAmount
-    ) external onlyOwner {
-        // require(revertStep > 1, "revert:1");
-        // approve router
-        address[] memory tokens;
-        tokens = new address[](2);
-        tokens[0] = initToken;
-        tokens[1] = checkToken;
-        _approveRouter(router, tokens, false);
-
-        // checkToken balance before this
-        uint256 thisBalanceBefore = IERC20(checkToken).balanceOf(address(this));
-
-        address[] memory routerPath;
-        routerPath = new address[](2);
-        routerPath[0] = initToken;
-        routerPath[1] = checkToken;
-        uint256[] memory amounts = _swapUniV2(
-            router,
-            initAmount,
-            1,
-            routerPath
-        );
-
-        uint256 thisBalanceAfter = IERC20(checkToken).balanceOf(address(this));
-
-        require(thisBalanceAfter - thisBalanceBefore == amounts[1], "tax:true");
-        require(false, "tax:false");
     }
 
     
