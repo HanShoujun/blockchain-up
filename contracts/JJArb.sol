@@ -7,6 +7,9 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/interfaces/IERC20Metadata.sol";
 import "@openzeppelin/contracts/utils/Strings.sol";
 import "./IUniswapV2.sol";
+import "./ISwapRouter.sol";
+import "./IUniswapV2Pair.sol";
+import "./IQuoterV2.sol";
 
 contract JJArbi is Ownable {
     enum ArbType {
@@ -54,11 +57,16 @@ contract JJArbi is Ownable {
         address baseToken,
         uint256 baseAmount,
         address[3][] calldata pathList,
-        uint8[] calldata typeList
+        uint8[] calldata typeList,
+        uint24[] calldata feeList
     ) external payable onlyOwner {
         require(
             pathList.length == typeList.length,
             "Params Error, pathList and typeList diffrent length"
+        );
+        require(
+            feeList.length == typeList.length,
+            "Params Error, feeList and typeList diffrent length"
         );
 
         uint256 balanceBefore = IERC20(baseToken).balanceOf(address(this));
@@ -101,7 +109,15 @@ contract JJArbi is Ownable {
                 );
                 amountOut = amounts[1];
             } else {
-                require(false, "unknown parse type");
+                uint24 fee = feeList[i];
+                amountOut = _swapUniV3(
+                    router,
+                    amountOut,
+                    1,
+                    tokenIn,
+                    tokenOut,
+                    fee
+                );
             }
 
             unchecked {
@@ -153,5 +169,125 @@ contract JJArbi is Ownable {
         );
     }
 
-    
+    function _swapUniV3(
+        address router,
+        uint256 amountIn,
+        uint256 amountOutMin,
+        address tokenIn,
+        address tokenOut,
+        uint24 fee
+    ) internal returns (uint256 amountOut) {
+        ISwapRouter router3 = ISwapRouter(router);
+        ISwapRouter.ExactInputSingleParams memory params = ISwapRouter
+            .ExactInputSingleParams({
+                tokenIn: tokenIn,
+                tokenOut: tokenOut,
+                fee: fee,
+                recipient: address(this),
+                deadline: block.timestamp + 60,
+                amountIn: amountIn,
+                amountOutMinimum: amountOutMin,
+                sqrtPriceLimitX96: 0
+            });
+        amountOut = router3.exactInputSingle(params);
+    }
+
+    function preCalculatePath(
+        address baseToken,
+        uint256[] calldata amounts,
+        address[3][] calldata pairs,
+        uint8[] calldata typeList,
+        uint24[] calldata feeList
+    ) public returns (uint256 maxProfit, uint256 profitAmount) {
+        require(
+            pairs.length == typeList.length,
+            "Params Error, pathList and typeList diffrent length"
+        );
+        require(
+            feeList.length == typeList.length,
+            "Params Error, feeList and typeList diffrent length"
+        );
+
+        address lastToken = baseToken;
+
+        for (uint8 i = 0; i < amounts.length; ) {
+            uint256 amountOut = amounts[i];
+
+            for (uint8 j = 0; j < pairs.length; ) {
+                address[3] memory path = pairs[j];
+                address tokenIn = path[1];
+                address tokenOut = path[2];
+                uint8 arbType = typeList[j];
+                if (
+                    arbType == uint8(ArbType.univ2) ||
+                    arbType == uint8(ArbType.sushiV2) ||
+                    arbType == uint8(ArbType.pancakeV2)
+                ) {
+                    uint256 reserve0;
+                    uint256 reserve1;
+                    uint256 reserveIn;
+                    uint256 reserveOut;
+
+                    IUniswapV2Pair pair = IUniswapV2Pair(path[0]);
+                    (reserve0, reserve1, ) = pair.getReserves();
+                    (reserveIn, reserveOut) = tokenIn == pair.token0()
+                        ? (reserve0, reserve1)
+                        : (reserve1, reserve0);
+
+                    amountOut = getAmountOut(amountOut, reserveIn, reserveOut);
+                } else {
+                    IQuoterV2 quoter = IQuoterV2(path[0]);
+                    uint24 fee = feeList[j];
+
+                    IQuoterV2.QuoteExactInputSingleParams
+                        memory params = IQuoterV2.QuoteExactInputSingleParams({
+                            tokenIn: tokenIn,
+                            tokenOut: tokenOut,
+                            amountIn: amountOut,
+                            fee: fee,
+                            sqrtPriceLimitX96: 0
+                        });
+                    (amountOut, , , ) = quoter.quoteExactInputSingle(params);
+                }
+
+                lastToken = tokenOut;
+
+                unchecked {
+                    j++;
+                }
+            }
+
+            require(
+                lastToken == baseToken,
+                "path error: baseToken not lastToken"
+            );
+
+            if (amountOut > amounts[i] && amountOut - amounts[i] > maxProfit) {
+                maxProfit = amountOut - amounts[i];
+                profitAmount = amounts[i];
+            }
+
+            unchecked {
+                i++;
+            }
+        }
+    }
+
+    // copy from UniswapV2Library
+    // given an input amount of an asset and pair reserves, returns the maximum output amount of the other asset
+    function getAmountOut(
+        uint256 amountIn,
+        uint256 reserveIn,
+        uint256 reserveOut
+    ) public pure returns (uint256 amountOut) {
+        require(amountIn > 0, "UniswapV2Library: INSUFFICIENT_INPUT_AMOUNT");
+        require(
+            reserveIn > 0 && reserveOut > 0,
+            "UniswapV2Library: INSUFFICIENT_LIQUIDITY"
+        );
+        uint256 amountInWithFee = amountIn * 997;
+        uint256 numerator = amountInWithFee * reserveOut;
+        uint256 denominator = reserveIn * 1000 + amountInWithFee;
+        amountOut = numerator / denominator;
+    }
 }
