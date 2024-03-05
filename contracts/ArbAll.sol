@@ -11,8 +11,10 @@ import "./ISwapRouter.sol";
 import "./IUniswapV2Pair.sol";
 import "./IQuoterV2.sol";
 import "./IWETH.sol";
+import "./IUniswapV3Factory.sol";
+import "./IUniswapV3Pool.sol";
 
-contract JJArbi is Ownable {
+contract ArbAll is Ownable {
     enum ArbType {
         none,
         univ2,
@@ -298,4 +300,122 @@ contract JJArbi is Ownable {
         uint256 denominator = reserveIn * 1000 + amountInWithFee;
         amountOut = numerator / denominator;
     }
+
+    function requeryTokenMetadata(address[] calldata tokenList)
+        public
+        view
+        returns (string[3][] memory infoList)
+    {
+        uint256 length = tokenList.length;
+        infoList = new string[3][](length);
+        for (uint256 i = 0; i < length; i++) {
+            address token = tokenList[i];
+            string memory name = IERC20Metadata(token).name();
+            string memory symbol = IERC20Metadata(token).symbol();
+            uint8 decimals = IERC20Metadata(token).decimals();
+            string memory decimalsStr = Strings.toString(uint256(decimals));
+            infoList[i] = [name, symbol, decimalsStr];
+        }
+    }
+
+    function checkTokenTax(
+        address initToken,
+        address checkToken,
+        address router,
+        address factory,
+        uint8 arbType
+    ) external {
+        // require(revertStep > 1, "revert:1");
+        uint256 initAmount = address(this).balance;
+
+        IWETH(initToken).deposit{value: address(this).balance}();
+
+        // checkToken balance before this
+        uint256 thisBalanceBefore = IERC20(checkToken).balanceOf(address(this));
+        uint256 amountOut;
+
+        address[] memory tokens;
+        tokens = new address[](2);
+        tokens[0] = initToken;
+        tokens[1] = checkToken;
+        _approveRouter(router, tokens, false);
+        if (
+            arbType == uint8(ArbType.univ2) ||
+            arbType == uint8(ArbType.sushiV2) ||
+            arbType == uint8(ArbType.pancakeV2)
+        ) {
+            address[] memory routerPath;
+            routerPath = new address[](2);
+            routerPath[0] = initToken;
+            routerPath[1] = checkToken;
+            uint256[] memory amounts = _swapUniV2(
+                router,
+                initAmount,
+                1,
+                routerPath
+            );
+            amountOut = amounts[1];
+        } else {
+            uint24 fee = getFee(initToken,checkToken,factory);
+
+            amountOut = _swapUniV3(
+                router,
+                initAmount,
+                1,
+                initToken,
+                checkToken,
+                fee
+            );
+        }
+
+        require(amountOut > 0, "amountOut is 0 tax:true");
+
+        require(
+            IERC20(checkToken).balanceOf(address(this)) - thisBalanceBefore ==
+                amountOut,
+            "buy token error tax:true"
+        );
+
+        uint256 ownerTokenBalanceBefore = IERC20(checkToken).balanceOf(owner());
+
+        IERC20(checkToken).transfer(owner(), amountOut);
+
+        require(
+            IERC20(checkToken).balanceOf(owner()) - ownerTokenBalanceBefore ==
+                amountOut,
+            "sell token error tax:true"
+        );
+
+        require(false, "tax:false");
+    }
+
+    function getFee(
+        address initToken,
+        address checkToken,
+        address factory
+    ) internal view returns (uint24 fee) {
+        address pool = address(0);
+        uint128 maxLiquidity;
+        uint24[5] memory list = [uint24(100), 500, 2500, 3000, 10000];
+        for (uint8 i; i < list.length; ) {
+            address tempPool = IUniswapV3Factory(factory).getPool(
+                checkToken,
+                initToken,
+                list[i]
+            );
+            if (tempPool != address(0)) {
+                uint128 liquidity = IUniswapV3Pool(tempPool).liquidity();
+                if (liquidity > maxLiquidity) {
+                    maxLiquidity = liquidity;
+                    pool = tempPool;
+                    fee = IUniswapV3Pool(pool).fee();
+                }
+            }
+            unchecked {
+                i++;
+            }
+        }
+        require(pool != address(0), "no pool");
+    }
+
 }

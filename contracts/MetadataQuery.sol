@@ -8,9 +8,22 @@ import "@openzeppelin/contracts/interfaces/IERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "./IUniswapV2.sol";
 import "./IWETH.sol";
+import "./ISwapRouter.sol";
+import "./IUniswapV3Factory.sol";
+import "./IUniswapV3Pool.sol";
 
 contract MetadataQuery is Ownable {
-    constructor(address initialOwner) Ownable(initialOwner) payable {}
+    enum ArbType {
+        none,
+        univ2,
+        univ3,
+        sushiV2,
+        sushiV3,
+        pancakeV2,
+        pancakeV3
+    }
+
+    constructor(address initialOwner) payable Ownable(initialOwner) {}
 
     function renounceOwnership() public override onlyOwner {}
 
@@ -54,36 +67,71 @@ contract MetadataQuery is Ownable {
     function checkTokenTax(
         address initToken,
         address checkToken,
-        address router
+        address router,
+        address factory,
+        uint8 arbType
     ) external {
         // require(revertStep > 1, "revert:1");
         uint256 initAmount = address(this).balance;
 
         IWETH(initToken).deposit{value: address(this).balance}();
 
+        // checkToken balance before this
+        uint256 thisBalanceBefore = IERC20(checkToken).balanceOf(address(this));
+        uint256 amountOut;
+
         address[] memory tokens;
         tokens = new address[](2);
         tokens[0] = initToken;
         tokens[1] = checkToken;
         _approveRouter(router, tokens, false);
+        if (
+            arbType == uint8(ArbType.univ2) ||
+            arbType == uint8(ArbType.sushiV2) ||
+            arbType == uint8(ArbType.pancakeV2)
+        ) {
+            address[] memory routerPath;
+            routerPath = new address[](2);
+            routerPath[0] = initToken;
+            routerPath[1] = checkToken;
+            uint256[] memory amounts = _swapUniV2(
+                router,
+                initAmount,
+                1,
+                routerPath
+            );
+            amountOut = amounts[1];
+        } else {
+            uint24 fee = getFee(initToken,checkToken,factory);
 
-        // checkToken balance before this
-        uint256 thisBalanceBefore = IERC20(checkToken).balanceOf(address(this));
+            amountOut = _swapUniV3(
+                router,
+                initAmount,
+                1,
+                initToken,
+                checkToken,
+                fee
+            );
+        }
 
-        address[] memory routerPath;
-        routerPath = new address[](2);
-        routerPath[0] = initToken;
-        routerPath[1] = checkToken;
-        uint256[] memory amounts = _swapUniV2(
-            router,
-            initAmount,
-            1,
-            routerPath
+        require(amountOut > 0, "amountOut is 0 tax:true");
+
+        require(
+            IERC20(checkToken).balanceOf(address(this)) - thisBalanceBefore ==
+                amountOut,
+            "buy token error tax:true"
         );
 
-        uint256 thisBalanceAfter = IERC20(checkToken).balanceOf(address(this));
+        uint256 ownerTokenBalanceBefore = IERC20(checkToken).balanceOf(owner());
 
-        require(thisBalanceAfter - thisBalanceBefore == amounts[1], "tax:true");
+        IERC20(checkToken).transfer(owner(), amountOut);
+
+        require(
+            IERC20(checkToken).balanceOf(owner()) - ownerTokenBalanceBefore ==
+                amountOut,
+            "sell token error tax:true"
+        );
+
         require(false, "tax:false");
     }
 
@@ -126,4 +174,55 @@ contract MetadataQuery is Ownable {
         );
     }
 
+    function _swapUniV3(
+        address router,
+        uint256 amountIn,
+        uint256 amountOutMin,
+        address tokenIn,
+        address tokenOut,
+        uint24 fee
+    ) internal returns (uint256 amountOut) {
+        ISwapRouter router3 = ISwapRouter(router);
+        ISwapRouter.ExactInputSingleParams memory params = ISwapRouter
+            .ExactInputSingleParams({
+                tokenIn: tokenIn,
+                tokenOut: tokenOut,
+                fee: fee,
+                recipient: address(this),
+                deadline: block.timestamp + 60,
+                amountIn: amountIn,
+                amountOutMinimum: amountOutMin,
+                sqrtPriceLimitX96: 0
+            });
+        amountOut = router3.exactInputSingle(params);
+    }
+
+    function getFee(
+        address initToken,
+        address checkToken,
+        address factory
+    ) internal view returns (uint24 fee) {
+        address pool = address(0);
+        uint128 maxLiquidity;
+        uint24[5] memory list = [uint24(100), 500, 2500, 3000, 10000];
+        for (uint8 i; i < list.length; ) {
+            address tempPool = IUniswapV3Factory(factory).getPool(
+                checkToken,
+                initToken,
+                list[i]
+            );
+            if (tempPool != address(0)) {
+                uint128 liquidity = IUniswapV3Pool(tempPool).liquidity();
+                if (liquidity > maxLiquidity) {
+                    maxLiquidity = liquidity;
+                    pool = tempPool;
+                    fee = IUniswapV3Pool(pool).fee();
+                }
+            }
+            unchecked {
+                i++;
+            }
+        }
+        require(pool != address(0), "no pool");
+    }
 }
