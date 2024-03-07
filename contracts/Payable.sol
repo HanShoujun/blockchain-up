@@ -36,4 +36,8 @@ contract Payable {
             sum += i;
         }
     }
+
+    function time() public view returns (uint256 ctime) {
+        ctime = block.timestamp + 60;
+    }
 }

@@ -27,7 +27,7 @@ contract ArbAll is Ownable {
 
     event Withdrawn(address indexed to, uint256 indexed value);
 
-    constructor(address initialOwner) Ownable(initialOwner) {}
+    constructor(address initialOwner) payable Ownable(initialOwner) {}
 
     function renounceOwnership() public override onlyOwner {}
 
